@@ -76,13 +76,6 @@
                      (append (order (remove-if-not #'(lambda (x) (< (first x) pivot)) lst))
                              (remove-if-not #'(lambda (x) (= (first x) pivot)) lst)
                              (order (remove-if-not #'(lambda (x) (> (first x) pivot)) lst))))))
-             (format-result (chars bin-lst)
-               (let ((result nil))
-                 (mapcar #'(lambda (char bin)
-                             (cond ((equal bin #\1)  (push char result))
-                                   ((equal bin #\0)  (push char result) (push #\' result))))
-                         chars bin-lst)
-                 (coerce (nreverse result) 'string)))
              (qm-rec (groups)
                (when groups
                  (let ((next-round nil))
@@ -128,6 +121,16 @@
       (maphash #'(lambda (key val)
                    (push (cons key (list val)) lst))
                bin)
-      (qm-rec (order lst))
-      (mapcar #'(lambda (entry) (format-result sample-chars entry)) final))))
+      (qm-rec (order lst)))
+    
+    (values
+     (mapcar #'(lambda (entry)
+                 (let ((result nil))
+                   (mapcar #'(lambda (char bin)
+                               (cond ((equal bin #\1)  (push char result))
+                                     ((equal bin #\0)  (push char result) (push #\' result))))
+                           sample-chars entry)
+                   (coerce (nreverse result) 'string)))
+             final)
+     (mapcar #'(lambda (entry) (coerce entry 'string)) final))))
 

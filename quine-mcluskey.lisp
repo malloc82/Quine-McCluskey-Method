@@ -85,7 +85,7 @@
                                       (1 1 1)
                                       (- - -))))
 
-(defun init-table (sum-list str-format)
+(defun init-table (sum-list str-format &key (print-fn nil))
   (let ((table (make-hash-table :test #'equal))
         (count-list nil))
     (mapc #'(lambda (x)
@@ -102,14 +102,16 @@
                              ))))
           sum-list)
     (setf (gethash :sorted-keys table) (remove-duplicates (order2 count-list)))
+    (when print-fn
+      (funcall print-fn table))
     table))
 
-(defun mark (k1 k2)
+(defun mark (k1-list k2-list)
   (let ((next-round nil)
         (used-k1 nil)
         (used-k2 nil))
-    (loop :for x in k1 :do
-       (loop :for y in k2 :do
+    (loop :for x in k1-list :do
+       (loop :for y in k2-list :do
           (let ((diff (funcall *xor-fn* x y)))
             (when (and diff
                        (= (count-elem diff #\1) 1))
@@ -120,8 +122,8 @@
      (remove-duplicates next-round)
      (remove-duplicates used-k1)
      (remove-duplicates used-k2))))
-  
-(defun qm2 (table)
+
+(defun qm2 (table &key (print-fn nil))
   (let ((keys (gethash :sorted-keys table)))
     (loop
        :for (k1 k2) :on keys :by #'cdr :until (null k2)
@@ -142,77 +144,41 @@
                                      k2-used))
                (setf k1-cache (getf (gethash k2 table) :current))
                (setf (getf (gethash k2 table) :current) nil))))
-    (dolist (k keys)
-      (when (getf (gethash k table) :unused)
-        (setf (getf (gethash k table) :saved)
-              (nconc (getf (gethash k table) :unused)
-                     (getf (gethash k table) :saved)))
-        (setf (getf (gethash k table) :unused) nil)))
-    (print-table2 table)))
+    (loop :for k in keys
+       :do (when (getf (gethash k table) :unused)
+             (setf (getf (gethash k table) :saved)
+                   (nconc (getf (gethash k table) :unused)
+                          (getf (gethash k table) :saved)))
+             (setf (getf (gethash k table) :unused) nil))
+       :if (getf (gethash k table) :current) :collect k into newkeys
+       :finally (setf (gethash :sorted-keys table) (order2 newkeys)))
+    (when print-fn
+      (funcall print-fn table))))
 
-(defun quine-mccluskey (sample-str sum-list)
-  (let* ((sample-chars (string-to-chars sample-str))
-         (table (make-hash-table :test #'equal))
-         (bin (make-hash-table :test #'equal))
-         (str-format (format nil "~c~d,'0b" #\~ (length sample-str)))
-         (lst nil)
-         (final nil))
-    (labels ((qm-rec (groups)
-               (when groups
-                 (let ((next-round nil))
-                   (mapl #'(lambda (sublst)
-                             (let ((new-group nil)
-                                   (current (second (first sublst)))
-                                   (next    (second (second sublst))))
-                               (when (and (cdr sublst)
-                                          (= (1+ (car (first sublst)))
-                                             (car (second sublst))))
-                                 (mapc #'(lambda (x)
-                                           (mapc #'(lambda (y)
-                                                     (let ((result (funcall *xor-fn* x y)))
-                                                       (when (and result
-                                                                  (= (count-elem result #\1) 1))
-                                                         (let ((new-entry (funcall *mask-fn* x y)))
-                                                           (when (null (gethash new-entry table))
-                                                             (setf (gethash new-entry table) 0)
-                                                             (push new-entry new-group))
-                                                           (setf (gethash x table) 2)
-                                                           (setf (gethash y table) 1)))))
-                                                 next))
-                                           current)
-                                 (when new-group
-                                   (push (cons (car (first sublst)) (list new-group)) next-round)))
-                               (mapc #'(lambda (x)
-                                         (let ((hash-check (gethash x table)))
-                                           (remhash x table)
-                                           (when (= hash-check 0)
-                                             (push x final))))
-                                     current)))
-                         groups)
-                   (qm-rec (nreverse next-round))))))
-      (mapc #'(lambda (x)
-                (let ((str (format nil str-format x))
-                      (chars nil))
-                  (loop for c across str
-                     if (equal c #\1) count c into count
-                     do (push c chars)
-                     finally (let ((val (nreverse chars)))
-                               (setf (gethash val table) 0)
-                               (push val (gethash count bin))))))
-            sum-list)
-      (maphash #'(lambda (key val)
-                   (push (cons key (list val)) lst))
-               bin)
-      (qm-rec (order lst)))
-    
-    (values
-     (mapcar #'(lambda (entry)
-                 (let ((result nil))
-                   (mapcar #'(lambda (char bin)
-                               (cond ((equal bin #\1)  (push char result))
-                                     ((equal bin #\0)  (push char result) (push #\' result))))
-                           sample-chars entry)
-                   (coerce (nreverse result) 'string)))
-             final)
-     (mapcar #'(lambda (entry) (coerce entry 'string)) final))))
+(defun mask-chars (str mask)
+  (let ((result nil))
+    (loop
+       :for c :in (coerce str 'list)
+       :for m :in mask
+       :do (cond ((equal m #\1) (push #\' result) (push c result))
+                 ((equal m #\0) (push c result))))
+    (coerce (reverse result) 'string)))
+
+(defun quine-mccluskey2 (sample-str sum-list &key (print-fn nil))
+  (let* ((str-format (format nil "~c~d,'0b" #\~ (length sample-str)))
+         (table (init-table sum-list str-format :print-fn print-fn)))
+    (loop
+       :while (gethash :sorted-keys table)
+       :do (qm2 table :print-fn print-fn)
+       :finally (let ((result nil))
+                  (print-table2 table)
+                  (loop
+                     :for val being the hash-values of table
+                     :if (getf val :saved) :do (setf result
+                                                     (nconc (getf val :saved) result)))
+                  (setq result (remove-duplicates result :test #'equal))
+                  (return
+                    (values
+                     (loop :for mask :in result :collect (mask-chars sample-str mask))
+                     (loop :for mask :in result :collect (coerce mask 'string))))))))
 

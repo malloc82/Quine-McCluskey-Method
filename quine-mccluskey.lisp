@@ -5,6 +5,7 @@
 ;;     This program minimize boolean terms using Quine-McCluskey method.
 ;;     Main function : quine-mccluskey
 
+(in-package #:quine-mccluskey)
 
 (defun print-table (table)
   (let ((result nil))
@@ -21,13 +22,6 @@
   (maphash #'(lambda (key value)
                (format t "~a : ~a ~%" key value))
            table))
-
-(defmacro string-to-chars (str &optional pos-lst)
-  (if (null pos-lst)
-      `(mapcar #'(lambda (index) (schar ,str index))
-               (loop for i from 0 upto (1- (length ,str)) collect i))
-      `(mapcar #'(lambda (index) (schar ,str index))
-               ,pos-lst)))
 
 (defmacro chars-gate (&key (inputs nil) (table nil))
   (let ((cond-body `((t (setq valid nil))))
@@ -48,11 +42,10 @@
               (result (map 'list #'(lambda ,inputs ,cond-body) ,@inputs)))
          (if valid result nil)))))
 
-(defmacro count-elem (lst e)
-  `(loop
-      for elem in ,lst
-      counting (equal ,e elem) into total
-      finally (return total)))
+(defun count-elem (lst e)
+  (loop :for elem :in lst
+     :counting (equal e elem) into total
+     :finally (return total)))
 
 (defun order (lst)
   (if (or (null lst) (null (cdr lst)))
@@ -85,43 +78,42 @@
                                       (1 1 1)
                                       (- - -))))
 
-(defun init-table (sum-list str-format &key (print-fn nil))
-  (let ((table (make-hash-table :test #'equal))
-        (count-list nil))
-    (mapc #'(lambda (x)
-              (let ((str (format nil str-format x))
-                    (chars nil))
-                (loop for c across str
-                   if (equal c #\1) count c into count
-                   do (push c chars)
-                   finally (let ((val (nreverse chars)))
-                             (push count count-list)
-                             (push val (getf (gethash count table) :current))
-                             ;; (setf (get (gethash count table) :current)
-                             ;;       (push val (get (gethash count table) :current)))
-                             ))))
-          sum-list)
-    (setf (gethash :sorted-keys table) (remove-duplicates (order2 count-list)))
-    (when print-fn
-      (funcall print-fn table))
-    table))
-
+(defun init-table (term-list bin-str-fmt &key (print-fn nil))
+  (loop :for term :in term-list
+     :with table = (make-hash-table :test #'equal) :and count-list = nil
+     :do (loop :for c :across (format nil bin-str-fmt term)
+            :with chars = nil
+            :count (equal c #\1) into count
+            :do (push c chars)
+            :finally (let ((val (nreverse chars)))
+                       (push count count-list)
+                       (push val (getf (gethash count table) :current))))
+     :finally (progn
+                (setf (gethash :sorted-keys table) (remove-duplicates (order2 count-list)))
+                (when print-fn (funcall print-fn table))
+                (return table))))
+     
 (defun mark (k1-list k2-list)
-  (let ((next-round nil)
-        (used-k1 nil)
-        (used-k2 nil))
-    (loop :for x in k1-list :do
-       (loop :for y in k2-list :do
-          (let ((diff (funcall *xor-fn* x y)))
-            (when (and diff
-                       (= (count-elem diff #\1) 1))
-              (push x used-k1)
-              (push y used-k2)
-              (push (funcall *mask-fn* x y) next-round)))))
-    (values
-     (remove-duplicates next-round)
-     (remove-duplicates used-k1)
-     (remove-duplicates used-k2))))
+  (loop :for x in k1-list
+     :with next-round = nil :and used-k1 = nil :and used-k2 = nil
+     :do (loop :for y :in k2-list :do
+            (let ((diff (funcall *xor-fn* x y)))
+              (when (and diff (= (count-elem diff #\1) 1))
+                (push x used-k1) (push y used-k2)
+                (push (funcall *mask-fn* x y) next-round))))
+     :finally (return (values
+                       (remove-duplicates next-round)
+                       (remove-duplicates used-k1)
+                       (remove-duplicates used-k2)))))
+
+(defun mask-chars (str mask)
+  (loop
+     :for c :in (coerce str 'list)
+     :for m :in mask
+     :with result = nil
+     :do (cond ((equal m #\1) (push #\' result) (push c result))
+               ((equal m #\0) (push c result)))
+     :finally (return (coerce (reverse result) 'string))))
 
 (defun qm2 (table &key (print-fn nil))
   (let ((keys (gethash :sorted-keys table)))
@@ -155,18 +147,9 @@
     (when print-fn
       (funcall print-fn table))))
 
-(defun mask-chars (str mask)
-  (let ((result nil))
-    (loop
-       :for c :in (coerce str 'list)
-       :for m :in mask
-       :do (cond ((equal m #\1) (push #\' result) (push c result))
-                 ((equal m #\0) (push c result))))
-    (coerce (reverse result) 'string)))
-
-(defun quine-mccluskey2 (sample-str sum-list &key (print-fn nil))
+(defun quine-mccluskey (sample-str minterms &key (print-fn nil))
   (let* ((str-format (format nil "~c~d,'0b" #\~ (length sample-str)))
-         (table (init-table sum-list str-format :print-fn print-fn)))
+         (table (init-table minterms str-format :print-fn print-fn)))
     (loop
        :while (gethash :sorted-keys table)
        :do (qm2 table :print-fn print-fn)
@@ -176,9 +159,9 @@
                      :for val being the hash-values of table
                      :if (getf val :saved) :do (setf result
                                                      (nconc (getf val :saved) result)))
-                  (setq result (remove-duplicates result :test #'equal))
                   (return
-                    (values
-                     (loop :for mask :in result :collect (mask-chars sample-str mask))
-                     (loop :for mask :in result :collect (coerce mask 'string))))))))
+                    (loop :for mask :in (remove-duplicates result :test #'equal)
+                       :collect (mask-chars sample-str mask) into str-list
+                       :collect (coerce mask 'string) into mask-list
+                       :finally (return (values str-list mask-list))))))))
 

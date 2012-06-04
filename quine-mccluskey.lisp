@@ -8,6 +8,11 @@
 (in-package #:quine-mccluskey)
 
 (defun print-table (table)
+  (maphash #'(lambda (key value)
+               (format t "~a : ~a ~%" key value))
+           table))
+
+(defun print-table2 (table)
   (let ((result nil))
     (maphash #'(lambda (key value)
                  (push (list (coerce key 'string)
@@ -17,11 +22,6 @@
     (format t "~%")
     (format t "~{~a~%~}" (reverse result))
     (format t "-------------------~%")))
-
-(defun print-table2 (table)
-  (maphash #'(lambda (key value)
-               (format t "~a : ~a ~%" key value))
-           table))
 
 (defmacro chars-gate (&key (inputs nil) (table nil))
   (let ((cond-body `((t (setq valid nil))))
@@ -79,7 +79,8 @@
                                       (- - -))))
 
 (defun init-table (term-list bin-str-fmt &key (print-fn nil))
-  (loop :for term :in term-list
+  (loop
+     :for term :in term-list
      :with table = (make-hash-table :test #'equal) :and count-list = nil
      :do (loop :for c :across (format nil bin-str-fmt term)
             :with chars = nil
@@ -115,7 +116,7 @@
                ((equal m #\0) (push c result)))
      :finally (return (coerce (reverse result) 'string))))
 
-(defun qm2 (table &key (print-fn nil))
+(defun process (table &key (print-fn nil))
   (let ((keys (gethash :sorted-keys table)))
     (loop
        :for (k1 k2) :on keys :by #'cdr :until (null k2)
@@ -127,7 +128,7 @@
                (setf (getf (gethash k1 table) :unused)
                      (set-difference (set-difference k1-cache k1-used)
                                      (getf (gethash k1 table) :used)))
-               (setf (getf (gethash k1 table) :current) k1-next)
+               (setf (getf (gethash k1 table) :current) k1-next) ;; save to current for next round
 
                ;; k2
                (setf (getf (gethash k2 table) :used) k2-used)
@@ -151,14 +152,17 @@
   (let* ((str-format (format nil "~c~d,'0b" #\~ (length sample-str)))
          (table (init-table minterms str-format :print-fn print-fn)))
     (loop
-       :while (gethash :sorted-keys table)
-       :do (qm2 table :print-fn print-fn)
+       :while (> (length (gethash :sorted-keys table)) 1)
+       :do (process table :print-fn print-fn)
        :finally (let ((result nil))
-                  (print-table2 table)
+                  (remhash :sorted-keys table)
+                  (print-table table)
                   (loop
                      :for val being the hash-values of table
                      :if (getf val :saved) :do (setf result
-                                                     (nconc (getf val :saved) result)))
+                                                     (nconc (getf val :saved) result))
+                     :if (getf val :current) :do (setf result
+                                                       (nconc (getf val :current result))))
                   (return
                     (loop :for mask :in (remove-duplicates result :test #'equal)
                        :collect (mask-chars sample-str mask) into str-list

@@ -23,6 +23,9 @@
     (format t "~{~a~%~}" (reverse result))
     (format t "-------------------~%")))
 
+(defmacro append-to (entry &key list)
+  `(setf ,entry (nconc ,list ,entry)))
+
 (defmacro chars-gate (&key (inputs nil) (table nil))
   (let ((cond-body `((t (setq valid nil))))
         (input-len (length inputs)))
@@ -117,7 +120,8 @@
      :finally (return (coerce (reverse result) 'string))))
 
 (defun process (table &key (print-fn nil))
-  (let ((keys (gethash :sorted-keys table)))
+  (let ((keys (gethash :sorted-keys table))
+        (updated 0))
     (loop
        :for (k1 k2) :on keys :by #'cdr :until (null k2)
        :with k1-cache = (getf (gethash (first keys) table) :current)
@@ -136,24 +140,23 @@
                      (set-difference (getf (gethash k2 table) :current)
                                      k2-used))
                (setf k1-cache (getf (gethash k2 table) :current))
-               (setf (getf (gethash k2 table) :current) nil))))
+               (setf (getf (gethash k2 table) :current) nil))
+             (incf updated)))
     (loop :for k in keys
        :do (when (getf (gethash k table) :unused)
-             (setf (getf (gethash k table) :saved)
-                   (nconc (getf (gethash k table) :unused)
-                          (getf (gethash k table) :saved)))
+             (append-to (getf (gethash k table) :saved) :list (getf (gethash k table) :unused))
              (setf (getf (gethash k table) :unused) nil))
        :if (getf (gethash k table) :current) :collect k into newkeys
        :finally (setf (gethash :sorted-keys table) (order2 newkeys)))
     (when print-fn
-      (funcall print-fn table))))
+      (funcall print-fn table))
+    updated))
 
 (defun quine-mccluskey (sample-str minterms &key (print-fn nil))
   (let* ((str-format (format nil "~c~d,'0b" #\~ (length sample-str)))
          (table (init-table minterms str-format :print-fn print-fn)))
     (loop
-       :while (> (length (gethash :sorted-keys table)) 1)
-       :do (process table :print-fn print-fn)
+       :while (> (process table :print-fn print-fn) 0) ;;(> (length (gethash :sorted-keys table)) 1)
        :finally (let ((result nil))
                   (remhash :sorted-keys table)
                   (print-table table)
@@ -162,7 +165,7 @@
                      :if (getf val :saved) :do (setf result
                                                      (nconc (getf val :saved) result))
                      :if (getf val :current) :do (setf result
-                                                       (nconc (getf val :current result))))
+                                                       (nconc (getf val :current) result)))
                   (return
                     (loop :for mask :in (remove-duplicates result :test #'equal)
                        :collect (mask-chars sample-str mask) into str-list
